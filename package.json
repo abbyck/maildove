@@ -1,0 +1,33 @@
+{
+  "name": "maildove",
+  "version": "0.0.1",
+  "description": "Send emails using Node.js only",
+  "main": "lib/maildove.js",
+  "types": "lib/maildove.d.ts",
+  "scripts": {
+    "build": "tsc --project tsconfig.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abbyck/maildove.git"
+  },
+  "keywords": [
+    "smtp",
+    "email",
+    "dkim"
+  ],
+  "author": "Abhinav Krishna C K",
+  "license": "GPL-2.0",
+  "bugs": {
+    "url": "https://github.com/abbyck/maildove/issues"
+  },
+  "homepage": "https://github.com/abbyck/maildove#readme",
+  "dependencies": {
+    "email-address": "^1.2.2",
+    "nodemailer": "^6.6.3"
+  },
+  "devDependencies": {
+    "@types/node": "^16.11.0",
+    "typescript": "^4.4.2"
+  }
+}
