@@ -1,6 +1,27 @@
 import EmailAddrParser from 'email-addresses';
 
 class EmailUtils {
+    /***
+     * Get all the email addresses from the `addresses` string and convert
+     * it to an array.
+     * @param addresses String containing recipient addresses.
+     * @returns {string[]} An array containing all the email addresses.
+     */
+    public getAddressesFromString(addresses: string): string[] {
+        const results: string[] = [];
+        let addressesArray: string[] = [];
+        if (!Array.isArray(addresses)) {
+            addressesArray = addresses.split(',');
+        }
+        addressesArray.forEach((email) => {
+            const parsedEmail = EmailAddrParser.parseOneAddress(email);
+            if (parsedEmail !== null && parsedEmail.type === 'mailbox') {
+                results.push(parsedEmail.address);
+            }
+        })
+        return results;
+    }
+
     /**
      * Get all the recipients grouped by domain name.
      * @param recipients String containing all the recipients.

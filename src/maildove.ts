@@ -64,38 +64,6 @@ class MailDove {
         this.tls = options.tls || { key: '', cert: '' };
     }
 
-    public groupRecipients(recipients: string[]) {
-        const groups = {};
-        for (const recipient of recipients) {
-            const parsedEmail = EmailAddrParser.parseOneAddress(recipient);
-            if (parsedEmail !== null && parsedEmail.type === 'mailbox') {
-                let host = parsedEmail.domain;
-                (groups[host] || (groups[host] = [])).push(recipient);
-            }
-        }
-        return groups;
-    }
-
-    /***
-     * Get email addresses from address string.
-     * @param addresses
-     * @returns {*[]}
-     */
-    public getAddresses(addresses): string[] {
-        const results: string[] = [];
-        if (!Array.isArray(addresses)) {
-            addresses = addresses.split(',');
-        }
-        const addressesLength = addresses.length;
-        for (let i = 0; i < addressesLength; i++) {
-            const parsedEmail = EmailAddrParser.parseOneAddress(addresses[i]);
-            if (parsedEmail !== null && parsedEmail.type === 'mailbox') {
-                results.push(parsedEmail.address);
-            }
-        }
-        return results;
-    }
-
     /**
      * Resolve MX records by domain.
      * @param {string} domain
@@ -355,15 +323,15 @@ class MailDove {
     public async sendmail(mail: Options): Promise<void> {
         let recipients = Array();
         if (mail.to) {
-            recipients = recipients.concat(this.getAddresses(mail.to));
+            recipients = recipients.concat(emailUtils.getAddressesFromString(String(mail.to)));
         }
 
         if (mail.cc) {
-            recipients = recipients.concat(this.getAddresses(mail.cc));
+            recipients = recipients.concat(emailUtils.getAddressesFromString(String(mail.cc)));
         }
 
         if (mail.bcc) {
-            recipients = recipients.concat(this.getAddresses(mail.bcc));
+            recipients = recipients.concat(emailUtils.getAddressesFromString(String(mail.bcc)));
         }
 
         const groups = emailUtils.groupRecipientsByDomain(recipients);
