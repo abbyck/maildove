@@ -1,6 +1,6 @@
 import EmailAddrParser from 'email-addresses';
 
-class EmailUtils {
+class AddressUtils {
     /***
      * Get all the email addresses from the `addresses` string and convert
      * it to an array.
@@ -18,7 +18,7 @@ class EmailUtils {
             if (parsedEmail !== null && parsedEmail.type === 'mailbox') {
                 results.push(parsedEmail.address);
             }
-        })
+        });
         return results;
     }
 
@@ -27,21 +27,17 @@ class EmailUtils {
      * @param recipients String containing all the recipients.
      * @returns {Record<string, string[]>} Recipients grouped by domain name.
      */
-    public groupRecipientsByDomain(
-        recipients: string[]
-    ): Record<string, string[]> {
+    public groupRecipientsByDomain(recipients: string[]): Record<string, string[]> {
         const recipientGroups = {};
         for (const recipient of recipients) {
             const parsedEmail = EmailAddrParser.parseOneAddress(recipient);
             if (parsedEmail !== null && parsedEmail.type === 'mailbox') {
-                let host = parsedEmail.domain;
-                (recipientGroups[host] || (recipientGroups[host] = [])).push(
-                    recipient
-                );
+                const host = parsedEmail.domain;
+                (recipientGroups[host] || (recipientGroups[host] = [])).push(recipient);
             }
         }
         return recipientGroups;
     }
 }
 
-export { EmailUtils };
+export { AddressUtils };

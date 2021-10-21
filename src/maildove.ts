@@ -1,14 +1,14 @@
 import { promises } from 'dns';
-import { connect, createSecureContext } from 'tls';
+import { connect, createSecureContext, SecureContext } from 'tls';
 import { createConnection } from 'net';
 import { DKIMSign } from 'dkim-signer';
 import { Options } from 'nodemailer/lib/mailer';
-import { EmailUtils } from './email-utils';
+import { AddressUtils } from './address-utils';
 import MailComposer from 'nodemailer/lib/mail-composer';
 import EmailAddrParser from 'email-addresses';
 
 const resolver = new promises.Resolver();
-const emailUtils = new EmailUtils();
+const addressUtils = new AddressUtils();
 const CRLF = '\r\n';
 
 const smtpCodes = {
@@ -70,7 +70,7 @@ class MailDove {
      * @returns {Promise<MXRecord[]>}
      */
     async resolveMX(domain: string): Promise<MXRecord[]> {
-        let resolvedMX = Array();
+        let resolvedMX: MXRecord[] = [];
         console.log(typeof this.smtpHost);
         if (this.smtpHost !== '' && this.smtpHost) {
             resolvedMX.push({ exchange: this.smtpHost, priority: 1 });
@@ -96,26 +96,17 @@ class MailDove {
      * @param {string}  body      Email body
      * @returns {Promise<void>}
      */
-    async sendToSMTP(
-        domain: string,
-        srcHost: string,
-        from: string,
-        recipients: string[],
-        body: string
-    ): Promise<void> {
+    async sendToSMTP(domain: string, srcHost: string, from: string, recipients: string[], body: string): Promise<void> {
         const resolvedMX = await this.resolveMX(domain);
         console.info('Resolved mx list:', resolvedMX);
         let sock,
-            msg = '';
-        const self = this;
-        function tryConnect(i: number) {
+            message = '';
+        const tryConnect = (i: number) => {
             if (i >= resolvedMX.length) {
-                throw Error(
-                    `Could not connect to any SMTP server for ${domain}`
-                );
+                throw Error(`Could not connect to any SMTP server for ${domain}`);
             }
 
-            sock = createConnection(self.smtpPort, resolvedMX[i].exchange);
+            sock = createConnection(this.smtpPort, resolvedMX[i].exchange);
 
             sock.on('error', function (err) {
                 console.error('Error on connectMx for: ', resolvedMX[i], err);
@@ -123,27 +114,25 @@ class MailDove {
             });
 
             sock.on('connect', function () {
-                console.debug(
-                    'MX connection created: ',
-                    resolvedMX[i].exchange
-                );
+                console.debug('MX connection created: ', resolvedMX[i].exchange);
                 sock.removeAllListeners('error');
                 return sock;
             });
-        }
+        };
+
         tryConnect(0);
 
         function onLine(line: string) {
             console.debug('RECV ' + domain + '>' + line);
 
-            msg += line + CRLF;
+            message += line + CRLF;
 
             if (line[3] === ' ') {
                 // 250-information dash is not complete.
                 // 250 OK. space is complete.
-                let lineNumber = parseInt(line.substr(0, 3));
-                response(lineNumber, msg);
-                msg = '';
+                const lineNumber = parseInt(line.substr(0, 3));
+                response(lineNumber, message);
+                message = '';
             }
         }
 
@@ -164,15 +153,14 @@ class MailDove {
             data = parts[parts.length - 1];
         });
 
-        sock.on('error', function (err: any) {
+        sock.on('error', (err: Error) => {
             throw Error(`Failed to connect to ${domain}: ${err}`);
         });
 
         let data = '';
         let step = 0;
-        let consoleinStep = 0;
-        const queue = Array();
-        let parts: string | any[];
+        const queue: string[] = [];
+        let parts: string[];
         let cmd: string;
         let upgraded = false;
         let isUpgradeInProgress = false;
@@ -186,23 +174,23 @@ class MailDove {
         queue.push('QUIT');
         queue.push('');
 
-        function response(code: number, msg: string) {
+        const response = (code: number, msg: string) => {
             switch (code) {
                 case smtpCodes.ServiceReady:
                     //220   on server ready
                     if (isUpgradeInProgress === true) {
                         sock.removeAllListeners('data');
-                        let original = sock;
+                        const original = sock;
                         original.pause();
-                        let opts: Record<string, any> = {
+                        const opts: Record<string, boolean| SecureContext> = {
                             socket: sock,
                             host: sock._host,
-                            rejectUnauthorized: self.rejectUnauthorized,
+                            rejectUnauthorized: this.rejectUnauthorized,
                         };
-                        if (self.startTLS) {
+                        if (this.startTLS) {
                             opts.secureContext = createSecureContext({
-                                cert: self.tls.cert,
-                                key: self.tls.key,
+                                cert: this.tls.cert,
+                                key: this.tls.key,
                             });
                         }
                         sock = connect(opts, () => {
@@ -210,11 +198,7 @@ class MailDove {
                                 data += chunk;
                                 parts = data.split(CRLF);
                                 const partsLength = parts.length - 1;
-                                for (
-                                    let i = 0, len = partsLength;
-                                    i < len;
-                                    i++
-                                ) {
+                                for (let i = 0, len = partsLength; i < len; i++) {
                                     onLine(parts[i]);
                                 }
                                 data = parts[parts.length - 1];
@@ -222,12 +206,8 @@ class MailDove {
                             sock.removeAllListeners('close');
                             sock.removeAllListeners('end');
                         });
-                        sock.on('error', function (err: any) {
-                            console.warn(
-                                'Could not upgrade to TLS:',
-                                err,
-                                'Falling back to plaintext'
-                            );
+                        sock.on('error', function (err: Error) {
+                            console.warn('Could not upgrade to TLS:', err, 'Falling back to plaintext');
                         });
                         // TLS Unsuccessful -> Resume plaintext connection
                         original.resume();
@@ -255,18 +235,14 @@ class MailDove {
                 case smtpCodes.OperationOK: // Operation OK
                     if (upgraded !== true) {
                         // check for STARTTLS/ignore-case
-                        if (/\bSTARTTLS\b/i.test(msg) && self.startTLS) {
-                            console.debug(
-                                'Server supports STARTTLS, continuing'
-                            );
+                        if (/\bSTARTTLS\b/i.test(msg) && this.startTLS) {
+                            console.debug('Server supports STARTTLS, continuing');
                             writeToSocket('STARTTLS');
                             isUpgradeInProgress = true;
                             break;
                         } else {
                             upgraded = true;
-                            console.debug(
-                                'No STARTTLS support or ignored, continuing'
-                            );
+                            console.debug('No STARTTLS support or ignored, continuing');
                         }
                     }
                     writeToSocket(queue[step]);
@@ -294,24 +270,19 @@ class MailDove {
 
                 case smtpCodes.ServerChallenge:
                     // Send consolein details [for relay]
-                    // TODO: support consolein.
-                    // writeToSocket(consolein[consoleinStep]);
-                    consoleinStep++;
+                    // TODO: support login.
+                    // writeToSocket(login[loginStep]);
+                    // loginStep++;
                     break;
 
                 default:
                     if (code >= smtpCodes.NegativeCompletion) {
-                        console.error(
-                            'SMTP server responds with error code',
-                            code
-                        );
+                        console.error('SMTP server responds with error code', code);
                         sock.end();
-                        throw Error(
-                            `SMTP server responded with code: ${code} + ${msg}`
-                        );
+                        throw Error(`SMTP server responded with code: ${code} + ${msg}`);
                     }
             }
-        }
+        };
     }
 
     /**
@@ -321,20 +292,20 @@ class MailDove {
      * @returns {Promise<void>}
      */
     public async sendmail(mail: Options): Promise<void> {
-        let recipients = Array();
+        let recipients: string[] = [];
         if (mail.to) {
-            recipients = recipients.concat(emailUtils.getAddressesFromString(String(mail.to)));
+            recipients = recipients.concat(addressUtils.getAddressesFromString(String(mail.to)));
         }
 
         if (mail.cc) {
-            recipients = recipients.concat(emailUtils.getAddressesFromString(String(mail.cc)));
+            recipients = recipients.concat(addressUtils.getAddressesFromString(String(mail.cc)));
         }
 
         if (mail.bcc) {
-            recipients = recipients.concat(emailUtils.getAddressesFromString(String(mail.bcc)));
+            recipients = recipients.concat(addressUtils.getAddressesFromString(String(mail.bcc)));
         }
 
-        const groups = emailUtils.groupRecipientsByDomain(recipients);
+        const groups = addressUtils.groupRecipientsByDomain(recipients);
         let from: string;
         let srcHost: string;
         let parsedEmail = EmailAddrParser.parseOneAddress(String(mail.from));
@@ -354,19 +325,11 @@ class MailDove {
                     message = Buffer.from(signature + CRLF + message, 'utf8');
                 }
                 // eslint-disable-next-line guard-for-in
-                for (let domain in groups) {
+                for (const domain in groups) {
                     try {
-                        await this.sendToSMTP(
-                            domain,
-                            srcHost,
-                            from,
-                            groups[domain],
-                            message.toString()
-                        );
+                        await this.sendToSMTP(domain, srcHost, from, groups[domain], message.toString());
                     } catch (ex) {
-                        console.error(
-                            `Could not send email to ${domain}: ${ex}`
-                        );
+                        console.error(`Could not send email to ${domain}: ${ex}`);
                     }
                 }
             }

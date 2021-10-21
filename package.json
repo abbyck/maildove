@@ -5,16 +5,20 @@
   "main": "lib/maildove.js",
   "types": "lib/maildove.d.ts",
   "scripts": {
-    "build": "tsc --project tsconfig.json"
+    "build": "tsc --project tsconfig.json",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "lint": "eslint -c .eslintrc.json . --ext .ts"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/abbyck/maildove.git"
   },
   "keywords": [
-    "smtp",
     "email",
-    "dkim"
+    "smtp",
+    "starttls",
+    "dkim",
+    "smtp-server"
   ],
   "author": "Abhinav Krishna C K",
   "license": "GPL-2.0",
@@ -31,9 +35,11 @@
     "@types/dkim-signer": "^0.2.2",
     "@types/node": "^16.11.0",
     "@types/nodemailer": "^6.4.4",
+    "@typescript-eslint/eslint-plugin": "^5.1.0",
+    "@typescript-eslint/parser": "^5.1.0",
     "eslint": "^8.0.1",
     "eslint-config-prettier": "^8.3.0",
-    "prettier": "2.4.1",
+    "prettier": "^2.4.1",
     "typescript": "^4.4.2"
   }
 }
