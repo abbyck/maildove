@@ -4,6 +4,7 @@
   "description": "Send emails using Node.js only",
   "main": "lib/maildove.js",
   "types": "lib/maildove.d.ts",
+  "files": ["lib/**/*"],
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "format": "prettier --write \"src/**/*.ts\"",
