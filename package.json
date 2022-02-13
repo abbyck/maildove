@@ -8,7 +8,8 @@
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "format": "prettier --write \"src/**/*.ts\"",
-    "lint": "eslint -c .eslintrc.json . --ext .ts"
+    "lint": "eslint -c .eslintrc.json . --ext .ts",
+    "test": "tsc --project tsconfig.json && node tests/mdovetester.js"
   },
   "repository": {
     "type": "git",

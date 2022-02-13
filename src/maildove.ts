@@ -71,7 +71,6 @@ class MailDove {
      */
     async resolveMX(domain: string): Promise<MXRecord[]> {
         let resolvedMX: MXRecord[] = [];
-        console.log(typeof this.smtpHost);
         if (this.smtpHost !== '' && this.smtpHost) {
             resolvedMX.push({ exchange: this.smtpHost, priority: 1 });
             return resolvedMX;
@@ -87,203 +86,211 @@ class MailDove {
         }
     }
 
-    /***
-     * Send email using SMTP.
-     * @param {string}  domain    `to` address.
-     * @param {string}  srcHost   Source hostname.
-     * @param {string}  from      Source from address.
-     * @param {string[]}recipients    Recipients list.
-     * @param {string}  body      Email body
-     * @returns {Promise<void>}
-     */
-    async sendToSMTP(domain: string, srcHost: string, from: string, recipients: string[], body: string): Promise<void> {
-        const resolvedMX = await this.resolveMX(domain);
-        console.info('Resolved mx list:', resolvedMX);
-        let sock,
-            message = '';
-        const tryConnect = (i: number) => {
-            if (i >= resolvedMX.length) {
-                throw Error(`Could not connect to any SMTP server for ${domain}`);
-            }
+       // /***
+    //  * Send email using SMTP.
+    //  * @param {string}  domain    `to` address.
+    //  * @param {string}  srcHost   Source hostname.
+    //  * @param {string}  from      Source from address.
+    //  * @param {string[]}recipients    Recipients list.
+    //  * @param {string}  body      Email body
+    //  * @returns {Promise<void>}
+    //  */
+    sendToSMTP(domain: string, srcHost: string, from: string, recipients: string[], body: string): Promise<unknown> { 
+        return new Promise((resolve, reject) => {
 
-            sock = createConnection(this.smtpPort, resolvedMX[i].exchange);
-
-            sock.on('error', function (err) {
-                console.error('Error on connectMx for: ', resolvedMX[i], err);
-                tryConnect(++i);
-            });
-
-            sock.on('connect', function () {
-                console.debug('MX connection created: ', resolvedMX[i].exchange);
-                sock.removeAllListeners('error');
-                return sock;
-            });
-        };
-
-        tryConnect(0);
-
-        function onLine(line: string) {
-            console.debug('RECV ' + domain + '>' + line);
-
-            message += line + CRLF;
-
-            if (line[3] === ' ') {
-                // 250-information dash is not complete.
-                // 250 OK. space is complete.
-                const lineNumber = parseInt(line.substr(0, 3));
-                response(lineNumber, message);
+        this.resolveMX(domain).then(MXRecord=> {
+            const resolvedMX = MXRecord;
+            console.info('Resolved mx list:', resolvedMX);
+            let sock,
                 message = '';
+            const tryConnect = (i: number) => {
+                if (i >= resolvedMX.length) {
+                    throw Error(`Could not connect to any SMTP server for ${domain}`);
+                }
+
+                sock = createConnection(this.smtpPort, resolvedMX[i].exchange);
+
+                sock.on('error', function (err) {
+                    console.error('Error on connectMx for: ', resolvedMX[i], err);
+                    tryConnect(++i);
+                });
+
+                sock.on('connect', function () {
+                    console.debug('MX connection created: ', resolvedMX[i].exchange);
+                    sock.removeAllListeners('error');
+                    return sock;
+                });
+            };
+
+            tryConnect(0);
+
+            function onLine(line: string) {
+                console.debug('RECV ' + domain + '>' + line);
+
+                message += line + CRLF;
+
+                if (line[3] === ' ') {
+                    // 250-information dash is not complete.
+                    // 250 OK. space is complete.
+                    const lineNumber = parseInt(line.substr(0, 3));
+                    response(lineNumber, message);
+                    message = '';
+                }
             }
-        }
 
-        function writeToSocket(s) {
-            console.debug(`SEND ${domain}> ${s}`);
-            sock.write(s + CRLF);
-        }
-
-        sock.setEncoding('utf8');
-
-        sock.on('data', function (chunk) {
-            data += chunk;
-            parts = data.split(CRLF);
-            const partsLength = parts.length - 1;
-            for (let i = 0, len = partsLength; i < len; i++) {
-                onLine(parts[i]);
+            function writeToSocket(s) {
+                console.debug(`SEND ${domain}> ${s}`);
+                sock.write(s + CRLF);
             }
-            data = parts[parts.length - 1];
-        });
 
-        sock.on('error', (err: Error) => {
-            throw Error(`Failed to connect to ${domain}: ${err}`);
-        });
+            sock.setEncoding('utf8');
 
-        let data = '';
-        let step = 0;
-        const queue: string[] = [];
-        let parts: string[];
-        let cmd: string;
-        let upgraded = false;
-        let isUpgradeInProgress = false;
+            sock.on('data', function (chunk) {
+                data += chunk;
+                parts = data.split(CRLF);
+                const partsLength = parts.length - 1;
+                for (let i = 0, len = partsLength; i < len; i++) {
+                    onLine(parts[i]);
+                }
+                data = parts[parts.length - 1];
+            });
 
-        queue.push('MAIL FROM:<' + from + '>');
-        const recipientsLength = recipients.length;
-        for (let i = 0; i < recipientsLength; i++) {
-            queue.push('RCPT TO:<' + recipients[i] + '>');
-        }
-        queue.push('DATA');
-        queue.push('QUIT');
-        queue.push('');
+            sock.on('error', (err: Error) => {
+                throw Error(`Failed to connect to ${domain}: ${err}`);
+            });
 
-        const response = (code: number, msg: string) => {
-            switch (code) {
-                case smtpCodes.ServiceReady:
-                    //220   on server ready
-                    if (isUpgradeInProgress === true) {
-                        sock.removeAllListeners('data');
-                        const original = sock;
-                        original.pause();
-                        const opts: Record<string, boolean| SecureContext> = {
-                            socket: sock,
-                            host: sock._host,
-                            rejectUnauthorized: this.rejectUnauthorized,
-                        };
-                        if (this.startTLS) {
-                            opts.secureContext = createSecureContext({
-                                cert: this.tls.cert,
-                                key: this.tls.key,
+            let data = '';
+            let step = 0;
+            const queue: string[] = [];
+            let parts: string[];
+            let cmd: string;
+            let upgraded = false;
+            let isUpgradeInProgress = false;
+
+            queue.push('MAIL FROM:<' + from + '>');
+            const recipientsLength = recipients.length;
+            for (let i = 0; i < recipientsLength; i++) {
+                queue.push('RCPT TO:<' + recipients[i] + '>');
+            }
+            queue.push('DATA');
+            queue.push('QUIT');
+            queue.push('');
+
+            const response = (code: number, msg: string) => {
+                switch (code) {
+                    case smtpCodes.ServiceReady:
+                        //220   on server ready
+                        if (isUpgradeInProgress === true) {
+                            sock.removeAllListeners('data');
+                            const original = sock;
+                            original.pause();
+                            const opts: Record<string, boolean| SecureContext> = {
+                                socket: sock,
+                                host: sock._host,
+                                rejectUnauthorized: this.rejectUnauthorized,
+                            };
+                            if (this.startTLS) {
+                                opts.secureContext = createSecureContext({
+                                    cert: this.tls.cert,
+                                    key: this.tls.key,
+                                });
+                            }
+                            sock = connect(opts, () => {
+                                sock.on('data', function (chunk) {
+                                    data += chunk;
+                                    parts = data.split(CRLF);
+                                    const partsLength = parts.length - 1;
+                                    for (let i = 0, len = partsLength; i < len; i++) {
+                                        onLine(parts[i]);
+                                    }
+                                    data = parts[parts.length - 1];
+                                });
+                                sock.removeAllListeners('close');
+                                sock.removeAllListeners('end');
                             });
-                        }
-                        sock = connect(opts, () => {
-                            sock.on('data', function (chunk) {
-                                data += chunk;
-                                parts = data.split(CRLF);
-                                const partsLength = parts.length - 1;
-                                for (let i = 0, len = partsLength; i < len; i++) {
-                                    onLine(parts[i]);
-                                }
-                                data = parts[parts.length - 1];
+                            sock.on('error', function (err: Error) {
+                                console.warn('Could not upgrade to TLS:', err, 'Falling back to plaintext');
                             });
-                            sock.removeAllListeners('close');
-                            sock.removeAllListeners('end');
-                        });
-                        sock.on('error', function (err: Error) {
-                            console.warn('Could not upgrade to TLS:', err, 'Falling back to plaintext');
-                        });
-                        // TLS Unsuccessful -> Resume plaintext connection
-                        original.resume();
-                        upgraded = true;
-                        writeToSocket('EHLO ' + srcHost);
-                        break;
-                    } else {
-                        // check for ESMTP/ignore-case
-                        if (/\besmtp\b/i.test(msg)) {
-                            // TODO: determine AUTH type; auth consolein, auth crm-md5, auth plain
-                            cmd = 'EHLO';
-                        } else {
+                            // TLS Unsuccessful -> Resume plaintext connection
+                            original.resume();
                             upgraded = true;
-                            cmd = 'HELO';
-                        }
-                        writeToSocket(`${cmd} ${srcHost}`);
-                        break;
-                    }
-                case smtpCodes.Bye:
-                    // BYE
-                    sock.end();
-                    console.info('message sent successfully', msg);
-                    break;
-                case smtpCodes.AuthSuccess: // Verify OK
-                case smtpCodes.OperationOK: // Operation OK
-                    if (upgraded !== true) {
-                        // check for STARTTLS/ignore-case
-                        if (/\bSTARTTLS\b/i.test(msg) && this.startTLS) {
-                            console.debug('Server supports STARTTLS, continuing');
-                            writeToSocket('STARTTLS');
-                            isUpgradeInProgress = true;
+                            writeToSocket('EHLO ' + srcHost);
                             break;
                         } else {
-                            upgraded = true;
-                            console.debug('No STARTTLS support or ignored, continuing');
+                            // check for ESMTP/ignore-case
+                            if (/\besmtp\b/i.test(msg)) {
+                                // TODO: determine AUTH type; auth consolein, auth crm-md5, auth plain
+                                cmd = 'EHLO';
+                            } else {
+                                upgraded = true;
+                                cmd = 'HELO';
+                            }
+                            writeToSocket(`${cmd} ${srcHost}`);
+                            break;
                         }
-                    }
-                    writeToSocket(queue[step]);
-                    step++;
-                    break;
-
-                case smtpCodes.ForwardNonLocalUser:
-                    // User not local; will forward.
-                    if (step === queue.length - 1) {
-                        console.info('OK:', code, msg);
-                        return;
-                    }
-                    writeToSocket(queue[step]);
-                    step++;
-                    break;
-
-                case smtpCodes.StartMailBody:
-                    // Start mail input
-                    // Inform end by `<CR><LF>.<CR><LF>`
-                    console.info('Sending mail body', body);
-                    writeToSocket(body);
-                    writeToSocket('');
-                    writeToSocket('.');
-                    break;
-
-                case smtpCodes.ServerChallenge:
-                    // Send consolein details [for relay]
-                    // TODO: support login.
-                    // writeToSocket(login[loginStep]);
-                    // loginStep++;
-                    break;
-
-                default:
-                    if (code >= smtpCodes.NegativeCompletion) {
-                        console.error('SMTP server responds with error code', code);
+                    case smtpCodes.Bye:
+                        // BYE
                         sock.end();
-                        throw Error(`SMTP server responded with code: ${code} + ${msg}`);
-                    }
+                        // console.info('message sent successfully', msg);
+                        resolve('Message sent successfully');
+                        break;
+                    case smtpCodes.AuthSuccess: // Verify OK
+                    case smtpCodes.OperationOK: // Operation OK
+                        if (upgraded !== true) {
+                            // check for STARTTLS/ignore-case
+                            if (/\bSTARTTLS\b/i.test(msg) && this.startTLS) {
+                                console.debug('Server supports STARTTLS, continuing');
+                                writeToSocket('STARTTLS');
+                                isUpgradeInProgress = true;
+                                break;
+                            } else {
+                                upgraded = true;
+                                console.debug('No STARTTLS support or ignored, continuing');
+                            }
+                        }
+                        writeToSocket(queue[step]);
+                        step++;
+                        break;
+
+                    case smtpCodes.ForwardNonLocalUser:
+                        // User not local; will forward.
+                        if (step === queue.length - 1) {
+                            console.info('OK:', code, msg);
+                            return;
+                        }
+                        writeToSocket(queue[step]);
+                        step++;
+                        break;
+
+                    case smtpCodes.StartMailBody:
+                        // Start mail input
+                        // Inform end by `<CR><LF>.<CR><LF>`
+                        console.info('Sending mail body', body);
+                        writeToSocket(body);
+                        writeToSocket('');
+                        writeToSocket('.');
+                        break;
+
+                    case smtpCodes.ServerChallenge:
+                        // Send consolein details [for relay]
+                        // TODO: support login.
+                        // writeToSocket(login[loginStep]);
+                        // loginStep++;
+                        break;
+
+                    default:
+                        if (code >= smtpCodes.NegativeCompletion) {
+                            console.error('SMTP server responds with error code', code);
+                            sock.end();
+                            throw Error(`SMTP server responded with code: ${code} + ${msg}`);
+                        }
             }
         };
+        })
+        });
+        
     }
+
 
     /**
      *  Send Mail directly
