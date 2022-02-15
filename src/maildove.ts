@@ -181,7 +181,7 @@ class MailDove {
         if (line[3] === ' ') {
             // 250-information dash is not complete.
             // 250 OK. space is complete.
-            const lineNumber = parseInt(line.substr(0, 3));
+            const lineNumber = parseInt(line.substring(0, 4));
             this.response(lineNumber, this.message, domain, srcHost, body, exchangeIndex);
             this.message = '';
         }
