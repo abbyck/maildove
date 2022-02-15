@@ -108,12 +108,13 @@ class MailDove {
     //  * @param {string}  body      Email body
     //  * @returns {Promise<void>}
     //  */
-    sendToSMTP(domain: string, srcHost: string, from: string, recipients: string[], body: string): Promise<unknown> { 
-        return new Promise((resolve, reject) => {
+    sendToSMTP(domain: string, srcHost: string, from: string, recipients: string[], body: string): Promise<string> { 
+        return new Promise((resolve) => {
             this.resolveMX(domain).then(MXRecord=> {
                 const resolvedMX = MXRecord;
-                console.info('Resolved mx list:', resolvedMX);
                 let exchangeIndex: number;
+
+                console.info('Resolved mx list:', resolvedMX);
                 // eslint-disable-next-line @typescript-eslint/no-shadow
                 const tryConnect = (exchangeIndex) => {
                     if (exchangeIndex >= resolvedMX.length) {
@@ -126,7 +127,6 @@ class MailDove {
                         console.error('Error on connectMx for: ', resolvedMX[exchangeIndex], err);
                         tryConnect(++exchangeIndex);
                     });
-
                     
                     this.sock.on('connect', () => {
                         console.debug('MX connection created: ', resolvedMX[exchangeIndex].exchange);
@@ -137,7 +137,6 @@ class MailDove {
 
                 tryConnect(0);
 
-
                 this.sock.setEncoding('utf8');
 
                 this.sock.on('data', (chunk) => {
@@ -145,7 +144,7 @@ class MailDove {
                     this.parts = this.data.split(CRLF);
                     const partsLength = this.parts.length - 1;
                     for (let i = 0, len = partsLength; i < len; i++) {
-                        this.onLine(this.parts[i], domain, srcHost, body, exchangeIndex);
+                        this.onLine(this.parts[i], domain, srcHost, body, exchangeIndex, resolve);
                     }
                     this.data = this.parts[this.parts.length - 1];
                 });
@@ -154,12 +153,13 @@ class MailDove {
                     throw Error(`Failed to connect to ${domain}: ${err}`);
                 });
 
-            
                 this.queue.push('MAIL FROM:<' + from + '>');
+
                 const recipientsLength = recipients.length;
                 for (let i = 0; i < recipientsLength; i++) {
                     this.queue.push('RCPT TO:<' + recipients[i] + '>');
                 }
+
                 this.queue.push('DATA');
                 this.queue.push('QUIT');
                 this.queue.push('');
@@ -173,27 +173,29 @@ class MailDove {
         this.sock.write(s + CRLF);
     }
 
-    onLine(line: string, domain: string, srcHost: string, body: string, exchangeIndex: number) {
+    onLine(line: string, domain: string, srcHost: string, body: string, exchangeIndex: number, resolve) {
         console.debug('RECV ' + domain + '>' + line);
 
         this.message += line + CRLF;
 
         if (line[3] === ' ') {
-            // 250-information dash is not complete.
-            // 250 OK. space is complete.
+            // 250 - Requested mail action okay, completed.
             const lineNumber = parseInt(line.substring(0, 4));
-            this.response(lineNumber, this.message, domain, srcHost, body, exchangeIndex);
-            this.message = '';
+            this.response(lineNumber, this.message, domain, srcHost, body, exchangeIndex, resolve);
+            // this.message = '';
         }
     }
 
-    response(code: number, msg: string, domain: string, srcHost: string, body: string, exchangeIndex: number) {
+    response(code: number, msg: string, domain: string, srcHost: string, body: string, exchangeIndex: number, resolve) {
         switch (code) {
             case smtpCodes.ServiceReady:
-                //220   on server ready
+                //220 - On <domain> Service ready
+                // Check if TLS upgrade is in progress
                 if (this.isUpgradeInProgress === true) {
                     this.sock.removeAllListeners('data');
                     const original = this.sock;
+                    // Pause the original socket and copy some options from it
+                    // to create a new socket.
                     original.pause();
                     const opts = {
                         socket: this.sock,
@@ -206,19 +208,21 @@ class MailDove {
                             key: this.tls.key,
                         });
                     }
+                    // Connect to the new socket with the copied options + secureContext.
                     this.sock = connect(opts, () => {
                         this.sock.on('data', (chunk) => {
                             this.data += chunk;
                             this.parts = this.data.split(CRLF);
                             const partsLength = this.parts.length - 1;
                             for (let i = 0, len = partsLength; i < len; i++) {
-                                this.onLine(this.parts[i], domain, srcHost, body, exchangeIndex);
+                                this.onLine(this.parts[i], domain, srcHost, body, exchangeIndex, resolve);
                             }
                             this.data = this.parts[this.parts.length - 1];
                         });
                         this.sock.removeAllListeners('close');
                         this.sock.removeAllListeners('end');
                     });
+
                     this.sock.on('error', function (err: Error) {
                         console.warn('Could not upgrade to TLS:', err, 'Falling back to plaintext');
                     });
@@ -230,7 +234,7 @@ class MailDove {
                 } else {
                     // check for ESMTP/ignore-case
                     if (/\besmtp\b/i.test(msg)) {
-                        // TODO: determine AUTH type; auth consolein, auth crm-md5, auth plain
+                        // TODO: determine AUTH type for relay; auth consolein, auth crm-md5, auth plain
                         this.cmd = 'EHLO';
                     } else {
                         this.upgraded = true;
@@ -242,9 +246,10 @@ class MailDove {
             case smtpCodes.Bye:
                 // BYE
                 this.sock.end();
-                console.info('message sent successfully', msg);
-                break;
-            case smtpCodes.AuthSuccess: // Verify OK
+                resolve(`Mail to ${domain} was sent successfully`);
+                return;
+                // break;
+            case smtpCodes.AuthSuccess: // AUTH-Verify OK
             case smtpCodes.OperationOK: // Operation OK
                 if (this.upgraded !== true) {
                     // check for STARTTLS/ignore-case

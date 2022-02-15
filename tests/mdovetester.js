@@ -7,14 +7,14 @@ const mailDove = new maildove.MailDove({
 
 mailDove
   .sendmail({
-    from: "abhi@abhi.in",
-    to: "abhinavkrishna2000@gmail.com",
-    subject: `You have a message from abby`,
+    from: "abhi@abhi.xyz",
+    to: "test@testmail.com",
+    subject: `You have a message from `,
     html: `hiii ${Math.floor((Math.random() * 100) + 1)}`,
   })
   .then((val) => {
-    console.log(`Message sent successfully`);
+    console.log(`Message sent successfully. Promise resolved val: ${ val}`);
   })
   .catch((ex) => {
-    console.log(`Could not sent email from, ${ex.stack}`);
+    console.log(`Could not sent email from, ${ex.code}`);
   })
