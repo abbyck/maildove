@@ -1,6 +1,6 @@
 import { promises } from 'dns';
-import { connect, createSecureContext, SecureContext } from 'tls';
-import { createConnection } from 'net';
+import { connect, createSecureContext } from 'tls';
+import { createConnection, Socket } from 'net';
 import { DKIMSign } from 'dkim-signer';
 import { Options } from 'nodemailer/lib/mailer';
 import { AddressUtils } from './address-utils';
@@ -60,8 +60,9 @@ class MailDove {
     cmd: string;
     upgraded = false;
     isUpgradeInProgress = false;
-    sock: any;
+    sock: Socket;
     message = '';
+    resolvedMX: MXRecord[] = [];
 
 
     constructor(options: MailDoveOptions) {
@@ -81,17 +82,16 @@ class MailDove {
      * @returns {Promise<MXRecord[]>}
      */
     async resolveMX(domain: string): Promise<MXRecord[]> {
-        let resolvedMX: MXRecord[] = [];
         if (this.smtpHost !== '' && this.smtpHost) {
-            resolvedMX.push({ exchange: this.smtpHost, priority: 1 });
-            return resolvedMX;
+            this.resolvedMX.push({ exchange: this.smtpHost, priority: 1 });
+            return this.resolvedMX;
         }
         try {
-            resolvedMX = await resolver.resolveMx(domain);
-            resolvedMX.sort(function (a, b) {
+            this.resolvedMX = await resolver.resolveMx(domain);
+            this.resolvedMX.sort(function (a, b) {
                 return a.priority - b.priority;
             });
-            return resolvedMX;
+            return this.resolvedMX;
         } catch (ex) {
             throw Error(`Failed to resolve MX for ${domain}: ${ex}`);
         }
@@ -110,59 +110,60 @@ class MailDove {
     //  */
     sendToSMTP(domain: string, srcHost: string, from: string, recipients: string[], body: string): Promise<unknown> { 
         return new Promise((resolve, reject) => {
+            this.resolveMX(domain).then(MXRecord=> {
+                const resolvedMX = MXRecord;
+                console.info('Resolved mx list:', resolvedMX);
+                let exchangeIndex: number;
+                // eslint-disable-next-line @typescript-eslint/no-shadow
+                const tryConnect = (exchangeIndex) => {
+                    if (exchangeIndex >= resolvedMX.length) {
+                        throw Error(`Could not connect to any SMTP server for ${domain}`);
+                    }
 
-        this.resolveMX(domain).then(MXRecord=> {
-            const resolvedMX = MXRecord;
-            console.info('Resolved mx list:', resolvedMX);
-            const tryConnect = (i: number) => {
-                if (i >= resolvedMX.length) {
-                    throw Error(`Could not connect to any SMTP server for ${domain}`);
-                }
+                    this.sock = createConnection(this.smtpPort, resolvedMX[exchangeIndex].exchange);
 
-                this.sock = createConnection(this.smtpPort, resolvedMX[i].exchange);
+                    this.sock.on('error', function (err) {
+                        console.error('Error on connectMx for: ', resolvedMX[exchangeIndex], err);
+                        tryConnect(++exchangeIndex);
+                    });
 
-                this.sock.on('error', function (err) {
-                    console.error('Error on connectMx for: ', resolvedMX[i], err);
-                    tryConnect(++i);
+                    
+                    this.sock.on('connect', () => {
+                        console.debug('MX connection created: ', resolvedMX[exchangeIndex].exchange);
+                        this.sock.removeAllListeners('error');
+                        return this.sock;
+                    });
+                };
+
+                tryConnect(0);
+
+
+                this.sock.setEncoding('utf8');
+
+                this.sock.on('data', (chunk) => {
+                    this.data += chunk;
+                    this.parts = this.data.split(CRLF);
+                    const partsLength = this.parts.length - 1;
+                    for (let i = 0, len = partsLength; i < len; i++) {
+                        this.onLine(this.parts[i], domain, srcHost, body, exchangeIndex);
+                    }
+                    this.data = this.parts[this.parts.length - 1];
                 });
 
-                
-                this.sock.on('connect', () => {
-                    console.debug('MX connection created: ', resolvedMX[i].exchange);
-                    this.sock.removeAllListeners('error');
-                    return this.sock;
+                this.sock.on('error', (err: Error) => {
+                    throw Error(`Failed to connect to ${domain}: ${err}`);
                 });
-            };
 
-            tryConnect(0);
-
-
-            this.sock.setEncoding('utf8');
-
-            this.sock.on('data', (chunk) => {
-                this.data += chunk;
-                this.parts = this.data.split(CRLF);
-                const partsLength = this.parts.length - 1;
-                for (let i = 0, len = partsLength; i < len; i++) {
-                    this.onLine(this.parts[i], domain, srcHost, body);
+            
+                this.queue.push('MAIL FROM:<' + from + '>');
+                const recipientsLength = recipients.length;
+                for (let i = 0; i < recipientsLength; i++) {
+                    this.queue.push('RCPT TO:<' + recipients[i] + '>');
                 }
-                this.data = this.parts[this.parts.length - 1];
+                this.queue.push('DATA');
+                this.queue.push('QUIT');
+                this.queue.push('');
             });
-
-            this.sock.on('error', (err: Error) => {
-                throw Error(`Failed to connect to ${domain}: ${err}`);
-            });
-
-           
-            this.queue.push('MAIL FROM:<' + from + '>');
-            const recipientsLength = recipients.length;
-            for (let i = 0; i < recipientsLength; i++) {
-                this.queue.push('RCPT TO:<' + recipients[i] + '>');
-            }
-            this.queue.push('DATA');
-            this.queue.push('QUIT');
-            this.queue.push('');
-        })
         });
         
     }
@@ -172,7 +173,7 @@ class MailDove {
         this.sock.write(s + CRLF);
     }
 
-    onLine(line: string, domain: string, srcHost: string, body: string) {
+    onLine(line: string, domain: string, srcHost: string, body: string, exchangeIndex: number) {
         console.debug('RECV ' + domain + '>' + line);
 
         this.message += line + CRLF;
@@ -181,12 +182,12 @@ class MailDove {
             // 250-information dash is not complete.
             // 250 OK. space is complete.
             const lineNumber = parseInt(line.substr(0, 3));
-            this.response(lineNumber, this.message, domain, srcHost, body);
+            this.response(lineNumber, this.message, domain, srcHost, body, exchangeIndex);
             this.message = '';
         }
     }
 
-    response(code: number, msg: string, domain: string, srcHost: string, body: string) {
+    response(code: number, msg: string, domain: string, srcHost: string, body: string, exchangeIndex: number) {
         switch (code) {
             case smtpCodes.ServiceReady:
                 //220   on server ready
@@ -194,13 +195,13 @@ class MailDove {
                     this.sock.removeAllListeners('data');
                     const original = this.sock;
                     original.pause();
-                    const opts: Record<string, boolean| SecureContext> = {
+                    const opts = {
                         socket: this.sock,
-                        host: this.sock._host,
+                        host: this.resolvedMX[exchangeIndex].exchange,
                         rejectUnauthorized: this.rejectUnauthorized,
-                    };
+                    }
                     if (this.startTLS) {
-                        opts.secureContext = createSecureContext({
+                        opts["secureContext"] = createSecureContext({
                             cert: this.tls.cert,
                             key: this.tls.key,
                         });
@@ -211,7 +212,7 @@ class MailDove {
                             this.parts = this.data.split(CRLF);
                             const partsLength = this.parts.length - 1;
                             for (let i = 0, len = partsLength; i < len; i++) {
-                                this.onLine(this.parts[i], domain, srcHost, body);
+                                this.onLine(this.parts[i], domain, srcHost, body, exchangeIndex);
                             }
                             this.data = this.parts[this.parts.length - 1];
                         });
@@ -242,9 +243,7 @@ class MailDove {
                 // BYE
                 this.sock.end();
                 console.info('message sent successfully', msg);
-                // resolve('Message sent successfully');
                 break;
-            
             case smtpCodes.AuthSuccess: // Verify OK
             case smtpCodes.OperationOK: // Operation OK
                 if (this.upgraded !== true) {
@@ -276,7 +275,6 @@ class MailDove {
             case smtpCodes.StartMailBody:
                 // Start mail input
                 // Inform end by `<CR><LF>.<CR><LF>`
-                console.info('Sending mail body', body);
                 this.writeToSocket(body, domain);
                 this.writeToSocket('', domain);
                 this.writeToSocket('.', domain);
@@ -295,7 +293,7 @@ class MailDove {
                     this.sock.end();
                     throw Error(`SMTP server responded with code: ${code} + ${msg}`);
                 }
-    }
+        }
     };
 
     /**

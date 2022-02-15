@@ -4,7 +4,9 @@
   "description": "Send emails using Node.js only",
   "main": "lib/maildove.js",
   "types": "lib/maildove.d.ts",
-  "files": ["lib/**/*"],
+  "files": [
+    "lib/**/*"
+  ],
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "format": "prettier --write \"src/**/*.ts\"",
@@ -35,7 +37,7 @@
   },
   "devDependencies": {
     "@types/dkim-signer": "^0.2.2",
-    "@types/node": "^16.11.0",
+    "@types/node": "^16.11.25",
     "@types/nodemailer": "^6.4.4",
     "@typescript-eslint/eslint-plugin": "^5.1.0",
     "@typescript-eslint/parser": "^5.1.0",
