@@ -6,6 +6,7 @@ import { Options } from 'nodemailer/lib/mailer';
 import { AddressUtils } from './address-utils';
 import MailComposer from 'nodemailer/lib/mail-composer';
 import EmailAddrParser from 'email-addresses';
+import logger from './logging';
 
 
 const resolver = new promises.Resolver();
@@ -62,7 +63,7 @@ class MailDove {
     isUpgradeInProgress = false;
     sock: Socket;
     message = '';
-    resolvedMX: MXRecord[] = [];
+    // resolvedMX: MXRecord[] = [];
 
 
     constructor(options: MailDoveOptions) {
@@ -83,15 +84,14 @@ class MailDove {
      */
     async resolveMX(domain: string): Promise<MXRecord[]> {
         if (this.smtpHost !== '' && this.smtpHost) {
-            this.resolvedMX.push({ exchange: this.smtpHost, priority: 1 });
-            return this.resolvedMX;
+            return ([{ exchange: this.smtpHost, priority: 1 }])
         }
         try {
-            this.resolvedMX = await resolver.resolveMx(domain);
-            this.resolvedMX.sort(function (a, b) {
+            const resolvedMX = await resolver.resolveMx(domain);
+            resolvedMX.sort(function (a, b) {
                 return a.priority - b.priority;
             });
-            return this.resolvedMX;
+            return resolvedMX;
         } catch (ex) {
             throw Error(`Failed to resolve MX for ${domain}: ${ex}`);
         }
@@ -109,27 +109,29 @@ class MailDove {
     //  * @returns {Promise<void>}
     //  */
     sendToSMTP(domain: string, srcHost: string, from: string, recipients: string[], body: string): Promise<string> { 
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             this.resolveMX(domain).then(MXRecord=> {
                 const resolvedMX = MXRecord;
-                let exchangeIndex: number;
+                let connectedExchange: string;
+                logger.log("debug", "Resolved MX %O", resolvedMX);
 
-                console.info('Resolved mx list:', resolvedMX);
                 // eslint-disable-next-line @typescript-eslint/no-shadow
-                const tryConnect = (exchangeIndex) => {
+                const tryConnect = (exchangeIndex: number) => {
                     if (exchangeIndex >= resolvedMX.length) {
-                        throw Error(`Could not connect to any SMTP server for ${domain}`);
+                        reject(`Could not connect to any SMTP server for ${domain}`);
+                        return;
                     }
 
                     this.sock = createConnection(this.smtpPort, resolvedMX[exchangeIndex].exchange);
 
                     this.sock.on('error', function (err) {
-                        console.error('Error on connectMx for: ', resolvedMX[exchangeIndex], err);
+                        logger.error(`Error on connectMx for: ${resolvedMX[exchangeIndex].exchange}, ${err}`);
                         tryConnect(++exchangeIndex);
                     });
                     
                     this.sock.on('connect', () => {
-                        console.debug('MX connection created: ', resolvedMX[exchangeIndex].exchange);
+                        logger.info('MX connection created: ' + resolvedMX[exchangeIndex].exchange);
+                        connectedExchange = resolvedMX[exchangeIndex].exchange;
                         this.sock.removeAllListeners('error');
                         return this.sock;
                     });
@@ -144,49 +146,52 @@ class MailDove {
                     this.parts = this.data.split(CRLF);
                     const partsLength = this.parts.length - 1;
                     for (let i = 0, len = partsLength; i < len; i++) {
-                        this.onLine(this.parts[i], domain, srcHost, body, exchangeIndex, resolve);
+                        this.onLine(this.parts[i], domain, srcHost, body, connectedExchange, resolve);
                     }
                     this.data = this.parts[this.parts.length - 1];
                 });
 
                 this.sock.on('error', (err: Error) => {
-                    throw Error(`Failed to connect to ${domain}: ${err}`);
+                    reject(`Failed to connect to ${domain}: ${err}`);
+                    return;
                 });
 
                 this.queue.push('MAIL FROM:<' + from + '>');
-
+                
                 const recipientsLength = recipients.length;
                 for (let i = 0; i < recipientsLength; i++) {
                     this.queue.push('RCPT TO:<' + recipients[i] + '>');
                 }
+                logger.log("verbose", "RCPTS %O", recipients);
 
                 this.queue.push('DATA');
                 this.queue.push('QUIT');
                 this.queue.push('');
-            });
+            }).catch((err) => {
+                reject(`sendToSMTP, ${err}`)
+            })
         });
-        
     }
 
     writeToSocket = (s: string, domain: string) => {
-        console.debug(`SEND ${domain}> ${s}`);
+        logger.debug(`SEND ${domain}> ${s}`);
         this.sock.write(s + CRLF);
     }
 
-    onLine(line: string, domain: string, srcHost: string, body: string, exchangeIndex: number, resolve) {
-        console.debug('RECV ' + domain + '>' + line);
+    onLine(line: string, domain: string, srcHost: string, body: string, connectedExchange: string, resolve) {
+        logger.debug('RECV ' + domain + '>' + line);
 
         this.message += line + CRLF;
 
         if (line[3] === ' ') {
             // 250 - Requested mail action okay, completed.
             const lineNumber = parseInt(line.substring(0, 4));
-            this.response(lineNumber, this.message, domain, srcHost, body, exchangeIndex, resolve);
+            this.response(lineNumber, this.message, domain, srcHost, body, connectedExchange, resolve);
             // this.message = '';
         }
     }
 
-    response(code: number, msg: string, domain: string, srcHost: string, body: string, exchangeIndex: number, resolve) {
+    response(code: number, msg: string, domain: string, srcHost: string, body: string, connectedExchange: string, resolve) {
         switch (code) {
             case smtpCodes.ServiceReady:
                 //220 - On <domain> Service ready
@@ -199,7 +204,7 @@ class MailDove {
                     original.pause();
                     const opts = {
                         socket: this.sock,
-                        host: this.resolvedMX[exchangeIndex].exchange,
+                        host: connectedExchange,
                         rejectUnauthorized: this.rejectUnauthorized,
                     }
                     if (this.startTLS) {
@@ -215,7 +220,7 @@ class MailDove {
                             this.parts = this.data.split(CRLF);
                             const partsLength = this.parts.length - 1;
                             for (let i = 0, len = partsLength; i < len; i++) {
-                                this.onLine(this.parts[i], domain, srcHost, body, exchangeIndex, resolve);
+                                this.onLine(this.parts[i], domain, srcHost, body, connectedExchange,resolve);
                             }
                             this.data = this.parts[this.parts.length - 1];
                         });
@@ -246,9 +251,18 @@ class MailDove {
             case smtpCodes.Bye:
                 // BYE
                 this.sock.end();
-                resolve(`Mail to ${domain} was sent successfully`);
+                // Reset step counter
+                this.step = 0;
+                // Clear the command queue
+                // https://es5.github.io/x15.4.html#x15.4
+                // whenever the length property is changed, every property
+                // whose name is an array index whose value is not smaller 
+                // than the new length is automatically deleted
+                this.queue.length = 0;
+
+                resolve(domain);
                 return;
-                // break;
+            
             case smtpCodes.AuthSuccess: // AUTH-Verify OK
             case smtpCodes.OperationOK: // Operation OK
                 if (this.upgraded !== true) {
@@ -260,7 +274,7 @@ class MailDove {
                         break;
                     } else {
                         this.upgraded = true;
-                        console.debug('No STARTTLS support or ignored, continuing');
+                        logger.debug('No STARTTLS support or ignored, continuing');
                     }
                 }
                 this.writeToSocket(this.queue[this.step], domain);
@@ -296,7 +310,7 @@ class MailDove {
                 if (code >= smtpCodes.NegativeCompletion) {
                     console.error('SMTP server responds with error code', code);
                     this.sock.end();
-                    throw Error(`SMTP server responded with code: ${code} + ${msg}`);
+                    resolve(`SMTP server responded with code: ${code} + ${msg}`);
                 }
         }
     };
@@ -307,8 +321,11 @@ class MailDove {
      * Complete attributes reference: https://nodemailer.com/extras/mailcomposer/#e-mail-message-fields
      * @returns {Promise<void>}
      */
-    public async sendmail(mail: Options): Promise<void> {
+    public async sendmail(mail: Options): Promise<string> {
+        // TODO: return void on success or error
         let recipients: string[] = [];
+        const successOutboundRecipients: string[] = [];
+
         if (mail.to) {
             recipients = recipients.concat(addressUtils.getAddressesFromString(String(mail.to)));
         }
@@ -322,34 +339,37 @@ class MailDove {
         }
 
         const groups = addressUtils.groupRecipientsByDomain(recipients);
-        let from: string;
-        let srcHost: string;
-        let parsedEmail = EmailAddrParser.parseOneAddress(String(mail.from));
-        if (parsedEmail !== null && parsedEmail.type === 'mailbox') {
-            from = parsedEmail.address;
-            parsedEmail = EmailAddrParser.parseOneAddress(parsedEmail.address);
-            if (parsedEmail !== null && parsedEmail.type === 'mailbox') {
-                srcHost = parsedEmail.domain;
-                let message = await new MailComposer(mail).compile().build();
-                if (this.dkimEnabled) {
-                    // eslint-disable-next-line new-cap
-                    const signature = DKIMSign(message, {
-                        privateKey: this.dkimPrivateKey,
-                        keySelector: this.dkimKeySelector,
-                        domainName: srcHost,
-                    });
-                    message = Buffer.from(signature + CRLF + message, 'utf8');
-                }
-                // eslint-disable-next-line guard-for-in
-                for (const domain in groups) {
-                    try {
-                        await this.sendToSMTP(domain, srcHost, from, groups[domain], message.toString());
-                    } catch (ex) {
-                        console.error(`Could not send email to ${domain}: ${ex}`);
-                    }
+
+        const parsedEmail = EmailAddrParser.parseOneAddress(String(mail.from));
+
+        if (parsedEmail?.type === 'mailbox') {
+            let message = await new MailComposer(mail).compile().build();
+            if (this.dkimEnabled) {
+                // eslint-disable-next-line new-cap
+                const signature = DKIMSign(message, {
+                    privateKey: this.dkimPrivateKey,
+                    keySelector: this.dkimKeySelector,
+                    domainName: parsedEmail.domain,
+                });
+                message = Buffer.from(signature + CRLF + message, 'utf8');
+            }
+
+            // eslint-disable-next-line guard-for-in
+            for (const domain in groups) {
+                try {
+                    logger.info(`DOMN: Group: ${groups[domain]}`)
+                    successOutboundRecipients.push(
+                    await this.sendToSMTP(domain, parsedEmail.domain, 
+                        parsedEmail.address, groups[domain], message.toString()));
+                } catch (ex) {
+                    logger.error(`Could not send email to ${domain}: ${ex}`);
                 }
             }
         }
+        if (!successOutboundRecipients.length){
+            throw "Could not send mails to any of the recipients"
+        }
+        return `Message sent to ${successOutboundRecipients}`;
     }
 }
 
