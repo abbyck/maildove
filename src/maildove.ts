@@ -109,7 +109,7 @@ class MailDove {
     //  * @returns {Promise<void>}
     //  */
     sendToSMTP(domain: string, srcHost: string, from: string, recipients: string[], body: string): Promise<string> { 
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             this.resolveMX(domain).then(MXRecord=> {
                 const resolvedMX = MXRecord;
                 let connectedExchange: string;
@@ -118,13 +118,14 @@ class MailDove {
                 // eslint-disable-next-line @typescript-eslint/no-shadow
                 const tryConnect = (exchangeIndex: number) => {
                     if (exchangeIndex >= resolvedMX.length) {
-                        throw Error(`Could not connect to any SMTP server for ${domain}`);
+                        reject(`Could not connect to any SMTP server for ${domain}`);
+                        return;
                     }
 
                     this.sock = createConnection(this.smtpPort, resolvedMX[exchangeIndex].exchange);
 
                     this.sock.on('error', function (err) {
-                        console.error('Error on connectMx for: ', resolvedMX[exchangeIndex], err);
+                        logger.error(`Error on connectMx for: ${resolvedMX[exchangeIndex].exchange}, ${err}`);
                         tryConnect(++exchangeIndex);
                     });
                     
@@ -151,7 +152,8 @@ class MailDove {
                 });
 
                 this.sock.on('error', (err: Error) => {
-                    throw Error(`Failed to connect to ${domain}: ${err}`);
+                    reject(`Failed to connect to ${domain}: ${err}`);
+                    return;
                 });
 
                 this.queue.push('MAIL FROM:<' + from + '>');
@@ -160,12 +162,14 @@ class MailDove {
                 for (let i = 0; i < recipientsLength; i++) {
                     this.queue.push('RCPT TO:<' + recipients[i] + '>');
                 }
-                logger.log("debug", "RCPTS %O", recipients);
+                logger.log("verbose", "RCPTS %O", recipients);
 
                 this.queue.push('DATA');
                 this.queue.push('QUIT');
                 this.queue.push('');
-            });
+            }).catch((err) => {
+                reject(`sendToSMTP, ${err}`)
+            })
         });
     }
 
@@ -187,7 +191,7 @@ class MailDove {
         }
     }
 
-    response(code: number, msg: string, domain: string, srcHost: string, body: string, connectedExchange: string,resolve) {
+    response(code: number, msg: string, domain: string, srcHost: string, body: string, connectedExchange: string, resolve) {
         switch (code) {
             case smtpCodes.ServiceReady:
                 //220 - On <domain> Service ready
@@ -256,9 +260,9 @@ class MailDove {
                 // than the new length is automatically deleted
                 this.queue.length = 0;
 
-                resolve(`Mail to ${domain} was sent successfully`);
+                resolve(domain);
                 return;
-                // break;
+            
             case smtpCodes.AuthSuccess: // AUTH-Verify OK
             case smtpCodes.OperationOK: // Operation OK
                 if (this.upgraded !== true) {
@@ -306,7 +310,7 @@ class MailDove {
                 if (code >= smtpCodes.NegativeCompletion) {
                     console.error('SMTP server responds with error code', code);
                     this.sock.end();
-                    throw Error(`SMTP server responded with code: ${code} + ${msg}`);
+                    resolve(`SMTP server responded with code: ${code} + ${msg}`);
                 }
         }
     };
@@ -317,9 +321,11 @@ class MailDove {
      * Complete attributes reference: https://nodemailer.com/extras/mailcomposer/#e-mail-message-fields
      * @returns {Promise<void>}
      */
-    public async sendmail(mail: Options): Promise<void> {
+    public async sendmail(mail: Options): Promise<string> {
         // TODO: return void on success or error
         let recipients: string[] = [];
+        const successOutboundRecipients: string[] = [];
+
         if (mail.to) {
             recipients = recipients.concat(addressUtils.getAddressesFromString(String(mail.to)));
         }
@@ -351,14 +357,19 @@ class MailDove {
             // eslint-disable-next-line guard-for-in
             for (const domain in groups) {
                 try {
-                    logger.info(`domain group: ${groups[domain]}`)
+                    logger.info(`DOMN: Group: ${groups[domain]}`)
+                    successOutboundRecipients.push(
                     await this.sendToSMTP(domain, parsedEmail.domain, 
-                        parsedEmail.address, groups[domain], message.toString());
+                        parsedEmail.address, groups[domain], message.toString()));
                 } catch (ex) {
-                    console.error(`Could not send email to ${domain}: ${ex}`);
+                    logger.error(`Could not send email to ${domain}: ${ex}`);
                 }
             }
         }
+        if (!successOutboundRecipients.length){
+            throw "Could not send mails to any of the recipients"
+        }
+        return `Message sent to ${successOutboundRecipients}`;
     }
 }
 

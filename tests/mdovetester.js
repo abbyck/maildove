@@ -1,20 +1,19 @@
 const maildove = require("../lib/maildove");
 
 const mailDove = new maildove.MailDove({
-  smtpPort: 2500,
-  smtpHost: "localhost",
+
 });
 
 mailDove
   .sendmail({
     from: "abhi@abhi.xyz",
-    to: "test@testmail.com, test@xxxxxx.com, test2@testmail.com",
+    to: "bob@testmail.com, abhinavkrishna2000@gmail.com, alice@testmail.com",
     subject: `You have a message from `,
     html: `hiii ${Math.floor((Math.random() * 100) + 1)}`,
   })
-  .then(() => {
-    console.log(`Message sent successfully`);
+  .then((val) => {
+    console.log(`RET: ${val} `);
   })
   .catch((ex) => {
-    console.log(`Could not sent email from, ${ex.code}`);
+    console.log(`ERR: ${ex}`);
   })
