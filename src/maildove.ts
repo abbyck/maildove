@@ -129,7 +129,7 @@ class MailDove {
                     });
                     
                     this.sock.on('connect', () => {
-                        console.debug('MX connection created: ', resolvedMX[exchangeIndex].exchange);
+                        logger.info('MX connection created: ' + resolvedMX[exchangeIndex].exchange);
                         connectedExchange = resolvedMX[exchangeIndex].exchange;
                         this.sock.removeAllListeners('error');
                         return this.sock;
@@ -170,12 +170,12 @@ class MailDove {
     }
 
     writeToSocket = (s: string, domain: string) => {
-        console.debug(`SEND ${domain}> ${s}`);
+        logger.debug(`SEND ${domain}> ${s}`);
         this.sock.write(s + CRLF);
     }
 
     onLine(line: string, domain: string, srcHost: string, body: string, connectedExchange: string, resolve) {
-        console.debug('RECV ' + domain + '>' + line);
+        logger.debug('RECV ' + domain + '>' + line);
 
         this.message += line + CRLF;
 
@@ -270,7 +270,7 @@ class MailDove {
                         break;
                     } else {
                         this.upgraded = true;
-                        console.debug('No STARTTLS support or ignored, continuing');
+                        logger.debug('No STARTTLS support or ignored, continuing');
                     }
                 }
                 this.writeToSocket(this.queue[this.step], domain);
