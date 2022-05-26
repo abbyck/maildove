@@ -119,7 +119,6 @@ class MailDove {
         return new Promise((resolve) => {
             this.resolveMX(domain).then(MXRecord=> {
                 const resolvedMX = MXRecord;
-                let exchangeIndex: number;
 
                 logger.log("debug", "Resolved MX %O", resolvedMX);
 
@@ -152,7 +151,8 @@ class MailDove {
                     this.parts = this.data.split(CRLF);
                     const partsLength = this.parts.length - 1;
                     for (let i = 0, len = partsLength; i < len; i++) {
-                        this.onLine(this.parts[i], domain, srcHost, body, exchangeIndex, resolve);
+                        // console.log("PPPPPPPP", exchangeIndex)
+                        this.onLine(this.parts[i], domain, srcHost, body, resolve);
                     }
                     this.data = this.parts[this.parts.length - 1];
                 });
@@ -181,7 +181,7 @@ class MailDove {
         this.sock.write(s + CRLF);
     }
 
-    onLine(line: string, domain: string, srcHost: string, body: string, exchangeIndex: number, resolve) {
+    onLine(line: string, domain: string, srcHost: string, body: string, resolve) {
         console.debug('RECV ' + domain + '>' + line);
 
         this.message += line + CRLF;
@@ -189,12 +189,12 @@ class MailDove {
         if (line[3] === ' ') {
             // 250 - Requested mail action okay, completed.
             const lineNumber = parseInt(line.substring(0, 4));
-            this.response(lineNumber, this.message, domain, srcHost, body, exchangeIndex, resolve);
+            this.response(lineNumber, this.message, domain, srcHost, body, resolve);
             // this.message = '';
         }
     }
 
-    response(code: number, msg: string, domain: string, srcHost: string, body: string, exchangeIndex: number, resolve) {
+    response(code: number, msg: string, domain: string, srcHost: string, body: string, resolve) {
         switch (code) {
             case smtpCodes.ServiceReady:
                 //220 - On <domain> Service ready
@@ -207,7 +207,7 @@ class MailDove {
                     original.pause();
                     const opts = {
                         socket: this.sock,
-                        host: this.resolvedMX[exchangeIndex].exchange,
+                        host: "this.resolvedMX[exchangeIndex].exchange",
                         rejectUnauthorized: this.rejectUnauthorized,
                     }
                     if (this.startTLS) {
@@ -223,7 +223,7 @@ class MailDove {
                             this.parts = this.data.split(CRLF);
                             const partsLength = this.parts.length - 1;
                             for (let i = 0, len = partsLength; i < len; i++) {
-                                this.onLine(this.parts[i], domain, srcHost, body, exchangeIndex, resolve);
+                                this.onLine(this.parts[i], domain, srcHost, body, resolve);
                             }
                             this.data = this.parts[this.parts.length - 1];
                         });
