@@ -6,6 +6,7 @@ import { Options } from 'nodemailer/lib/mailer';
 import { AddressUtils } from './address-utils';
 import MailComposer from 'nodemailer/lib/mail-composer';
 import EmailAddrParser from 'email-addresses';
+import logger from './logging';
 
 
 const resolver = new promises.Resolver();
@@ -83,6 +84,12 @@ class MailDove {
      */
     async resolveMX(domain: string): Promise<MXRecord[]> {
         if (this.smtpHost !== '' && this.smtpHost) {
+            // TODO: Don't use global variables
+
+            // causes multiple tries to previously send domains
+            while(this.resolvedMX.length > 0) {
+                this.resolvedMX.pop();
+            }
             this.resolvedMX.push({ exchange: this.smtpHost, priority: 1 });
             return this.resolvedMX;
         }
@@ -114,9 +121,10 @@ class MailDove {
                 const resolvedMX = MXRecord;
                 let exchangeIndex: number;
 
-                console.info('Resolved mx list:', resolvedMX);
+                logger.log("debug", "Resolved MX %O", resolvedMX);
+
                 // eslint-disable-next-line @typescript-eslint/no-shadow
-                const tryConnect = (exchangeIndex) => {
+                const tryConnect = (exchangeIndex: number) => {
                     if (exchangeIndex >= resolvedMX.length) {
                         throw Error(`Could not connect to any SMTP server for ${domain}`);
                     }
@@ -154,18 +162,18 @@ class MailDove {
                 });
 
                 this.queue.push('MAIL FROM:<' + from + '>');
-
+                
                 const recipientsLength = recipients.length;
                 for (let i = 0; i < recipientsLength; i++) {
                     this.queue.push('RCPT TO:<' + recipients[i] + '>');
                 }
+                logger.log("debug", "RCPTS %O", recipients);
 
                 this.queue.push('DATA');
                 this.queue.push('QUIT');
                 this.queue.push('');
             });
         });
-        
     }
 
     writeToSocket = (s: string, domain: string) => {
@@ -246,6 +254,16 @@ class MailDove {
             case smtpCodes.Bye:
                 // BYE
                 this.sock.end();
+                // Reset step counter
+                this.step = 0;
+                // Clear the command queue
+                // https://es5.github.io/x15.4.html#x15.4
+                // whenever the length property is changed, every property
+                // whose name is an array index whose value is not smaller 
+                // than the new length is automatically deleted
+
+                this.queue.length = 0;
+
                 resolve(`Mail to ${domain} was sent successfully`);
                 return;
                 // break;
@@ -308,6 +326,7 @@ class MailDove {
      * @returns {Promise<void>}
      */
     public async sendmail(mail: Options): Promise<void> {
+        // TODO: return void on success or error
         let recipients: string[] = [];
         if (mail.to) {
             recipients = recipients.concat(addressUtils.getAddressesFromString(String(mail.to)));
@@ -322,31 +341,29 @@ class MailDove {
         }
 
         const groups = addressUtils.groupRecipientsByDomain(recipients);
-        let from: string;
-        let srcHost: string;
-        let parsedEmail = EmailAddrParser.parseOneAddress(String(mail.from));
-        if (parsedEmail !== null && parsedEmail.type === 'mailbox') {
-            from = parsedEmail.address;
-            parsedEmail = EmailAddrParser.parseOneAddress(parsedEmail.address);
-            if (parsedEmail !== null && parsedEmail.type === 'mailbox') {
-                srcHost = parsedEmail.domain;
-                let message = await new MailComposer(mail).compile().build();
-                if (this.dkimEnabled) {
-                    // eslint-disable-next-line new-cap
-                    const signature = DKIMSign(message, {
-                        privateKey: this.dkimPrivateKey,
-                        keySelector: this.dkimKeySelector,
-                        domainName: srcHost,
-                    });
-                    message = Buffer.from(signature + CRLF + message, 'utf8');
-                }
-                // eslint-disable-next-line guard-for-in
-                for (const domain in groups) {
-                    try {
-                        await this.sendToSMTP(domain, srcHost, from, groups[domain], message.toString());
-                    } catch (ex) {
-                        console.error(`Could not send email to ${domain}: ${ex}`);
-                    }
+
+        const parsedEmail = EmailAddrParser.parseOneAddress(String(mail.from));
+
+        if (parsedEmail?.type === 'mailbox') {
+            let message = await new MailComposer(mail).compile().build();
+            if (this.dkimEnabled) {
+                // eslint-disable-next-line new-cap
+                const signature = DKIMSign(message, {
+                    privateKey: this.dkimPrivateKey,
+                    keySelector: this.dkimKeySelector,
+                    domainName: parsedEmail.domain,
+                });
+                message = Buffer.from(signature + CRLF + message, 'utf8');
+            }
+
+            // eslint-disable-next-line guard-for-in
+            for (const domain in groups) {
+                try {
+                    logger.info(`domain group: ${groups[domain]}`)
+                    await this.sendToSMTP(domain, parsedEmail.domain, 
+                        parsedEmail.address, groups[domain], message.toString());
+                } catch (ex) {
+                    console.error(`Could not send email to ${domain}: ${ex}`);
                 }
             }
         }

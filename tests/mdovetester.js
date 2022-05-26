@@ -8,12 +8,12 @@ const mailDove = new maildove.MailDove({
 mailDove
   .sendmail({
     from: "abhi@abhi.xyz",
-    to: "test@testmail.com",
+    to: "test@testmail.com, test@xxxxxx.com, test2@testmail.com",
     subject: `You have a message from `,
     html: `hiii ${Math.floor((Math.random() * 100) + 1)}`,
   })
-  .then((val) => {
-    console.log(`Message sent successfully. Promise resolved val: ${ val}`);
+  .then(() => {
+    console.log(`Message sent successfully`);
   })
   .catch((ex) => {
     console.log(`Could not sent email from, ${ex.code}`);
