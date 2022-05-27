@@ -63,7 +63,6 @@ class MailDove {
     isUpgradeInProgress = false;
     sock: Socket;
     message = '';
-    // resolvedMX: MXRecord[] = [];
 
 
     constructor(options: MailDoveOptions) {
@@ -369,7 +368,7 @@ class MailDove {
         if (!successOutboundRecipients.length){
             throw "Could not send mails to any of the recipients"
         }
-        return `Message sent to ${successOutboundRecipients}`;
+        return `${successOutboundRecipients}`;
     }
 }
 
