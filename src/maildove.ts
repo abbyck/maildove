@@ -318,9 +318,9 @@ class MailDove {
      *  Send Mail directly
      * @param mail Mail object containing message, to/from etc.
      * Complete attributes reference: https://nodemailer.com/extras/mailcomposer/#e-mail-message-fields
-     * @returns {Promise<void>}
+     * @returns {Promise<string[]>}
      */
-    public async sendmail(mail: Options): Promise<string> {
+    public async sendmail(mail: Options): Promise<string[]> {
         // TODO: return void on success or error
         let recipients: string[] = [];
         const successOutboundRecipients: string[] = [];
@@ -368,7 +368,7 @@ class MailDove {
         if (!successOutboundRecipients.length){
             throw "Could not send mails to any of the recipients"
         }
-        return `${successOutboundRecipients}`;
+        return successOutboundRecipients;
     }
 }
 
