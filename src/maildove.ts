@@ -107,69 +107,66 @@ class MailDove {
     //  * @param {string}  body      Email body
     //  * @returns {Promise<void>}
     //  */
-    sendToSMTP(domain: string, srcHost: string, from: string, recipients: string[], body: string): Promise<string> { 
-        return new Promise((resolve, reject) => {
-            this.resolveMX(domain).then(MXRecord=> {
-                const resolvedMX = MXRecord;
-                let connectedExchange: string;
-                logger.log("debug", "Resolved MX %O", resolvedMX);
+    async sendToSMTP(domain: string, srcHost: string, from: string, recipients: string[], body: string): Promise<any> { 
+        const resolvedMX = await this.resolveMX(domain)
+        let connectedExchange: string;
+        logger.log("debug", "Resolved MX %O", resolvedMX);
 
-                // eslint-disable-next-line @typescript-eslint/no-shadow
-                const tryConnect = (exchangeIndex: number) => {
-                    if (exchangeIndex >= resolvedMX.length) {
-                        reject(`Could not connect to any SMTP server for ${domain}`);
-                        return;
-                    }
+        for (const x of resolvedMX) {
+            console.log("exchange", x)
+        }
 
-                    this.sock = createConnection(this.smtpPort, resolvedMX[exchangeIndex].exchange);
+        // const tryConnect = (exchangeIndex: number) => {
+        //     if (exchangeIndex >= resolvedMX.length) {
+        //         reject(`Could not connect to any SMTP server for ${domain}`);
+        //         return;
+        //     }
 
-                    this.sock.on('error', function (err) {
-                        logger.error(`Error on connectMx for: ${resolvedMX[exchangeIndex].exchange}, ${err}`);
-                        tryConnect(++exchangeIndex);
-                    });
-                    
-                    this.sock.on('connect', () => {
-                        logger.info('MX connection created: ' + resolvedMX[exchangeIndex].exchange);
-                        connectedExchange = resolvedMX[exchangeIndex].exchange;
-                        this.sock.removeAllListeners('error');
-                        return this.sock;
-                    });
-                };
+        //     this.sock = createConnection(this.smtpPort, resolvedMX[exchangeIndex].exchange);
 
-                tryConnect(0);
+        //     this.sock.on('error', function (err) {
+        //         logger.error(`Error on connectMx for: ${resolvedMX[exchangeIndex].exchange}, ${err}`);
+        //         tryConnect(++exchangeIndex);
+        //     });
+            
+        //     this.sock.on('connect', () => {
+        //         logger.info('MX connection created: ' + resolvedMX[exchangeIndex].exchange);
+        //         connectedExchange = resolvedMX[exchangeIndex].exchange;
+        //         this.sock.removeAllListeners('error');
+        //         return this.sock;
+        //     });
+        // };
 
-                this.sock.setEncoding('utf8');
+        // tryConnect(0);
 
-                this.sock.on('data', (chunk) => {
-                    this.data += chunk;
-                    this.parts = this.data.split(CRLF);
-                    const partsLength = this.parts.length - 1;
-                    for (let i = 0, len = partsLength; i < len; i++) {
-                        this.onLine(this.parts[i], domain, srcHost, body, connectedExchange, resolve);
-                    }
-                    this.data = this.parts[this.parts.length - 1];
-                });
+        // this.sock.setEncoding('utf8');
 
-                this.sock.on('error', (err: Error) => {
-                    reject(`Failed to connect to ${domain}: ${err}`);
-                    return;
-                });
+        // this.sock.on('data', (chunk) => {
+        //     this.data += chunk;
+        //     this.parts = this.data.split(CRLF);
+        //     const partsLength = this.parts.length - 1;
+        //     for (let i = 0, len = partsLength; i < len; i++) {
+        //         this.onLine(this.parts[i], domain, srcHost, body, connectedExchange, resolve);
+        //     }
+        //     this.data = this.parts[this.parts.length - 1];
+        // });
 
-                this.queue.push('MAIL FROM:<' + from + '>');
-                
-                const recipientsLength = recipients.length;
-                for (let i = 0; i < recipientsLength; i++) {
-                    this.queue.push('RCPT TO:<' + recipients[i] + '>');
-                }
-                logger.log("verbose", "RCPTS %O", recipients);
+        // this.sock.on('error', (err: Error) => {
+        //     reject(`Failed to connect to ${domain}: ${err}`);
+        //     return;
+        // });
 
-                this.queue.push('DATA');
-                this.queue.push('QUIT');
-                this.queue.push('');
-            }).catch((err) => {
-                reject(`sendToSMTP, ${err}`)
-            })
-        });
+        // this.queue.push('MAIL FROM:<' + from + '>');
+        
+        // const recipientsLength = recipients.length;
+        // for (let i = 0; i < recipientsLength; i++) {
+        //     this.queue.push('RCPT TO:<' + recipients[i] + '>');
+        // }
+        // logger.log("verbose", "RCPTS %O", recipients);
+
+        // this.queue.push('DATA');
+        // this.queue.push('QUIT');
+        // this.queue.push('');
     }
 
     writeToSocket = (s: string, domain: string) => {
