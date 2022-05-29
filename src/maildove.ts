@@ -54,15 +54,12 @@ class MailDove {
     startTLS: boolean;
     rejectUnauthorized: boolean;
     tls: tlsInterface;
-    data = '';
     step = 0;
     queue: string[] = [];
-    parts: string[];
-    cmd: string;
+    // TODO: May crash in multi domain scenario
     upgraded = false;
     isUpgradeInProgress = false;
     sock: Socket;
-    message = '';
 
 
     constructor(options: MailDoveOptions) {
@@ -107,16 +104,16 @@ class MailDove {
     //  * @param {string}  body      Email body
     //  * @returns {Promise<void>}
     //  */
-    async sendToSMTP(domain: string, srcHost: string, from: string, recipients: string[], body: string): Promise<any> { 
+    async sendToSMTP(domain: string, srcHost: string, from: string, recipients: string[], body: string): Promise<any> {
         const resolvedMX = await this.resolveMX(domain)
-        logger.log("debug", "Resolved MX %O", resolvedMX); 
+        logger.log("debug", "Resolved MX %O", resolvedMX);
 
         await new Promise((resolve, reject) => {
             let connectedExchange: string;
 
             for (const mx of resolvedMX) {
                 this.sock = createConnection(this.smtpPort, mx.exchange);
-    
+
                 // eslint-disable-next-line no-loop-func
                 this.sock.on('connect', () => {
                     logger.info('Connected to exchange: ' + mx.exchange);
@@ -143,16 +140,16 @@ class MailDove {
                 reject(`Failed to connect to ${domain}: ${err}`);
                 return;
             });
-    
+
             // Build rest of the SMTP exchange queue
             this.queue.push('MAIL FROM:<' + from + '>');
-            
+
             const recipientsLength = recipients.length;
             for (let i = 0; i < recipientsLength; i++) {
                 this.queue.push('RCPT TO:<' + recipients[i] + '>');
             }
             logger.log("verbose", "RCPTS %O", recipients);
-    
+
             this.queue.push('DATA');
             this.queue.push('QUIT');
             this.queue.push('');
@@ -169,13 +166,12 @@ class MailDove {
     onLine(line: string, domain: string, srcHost: string, body: string, connectedExchange: string, resolve) {
         logger.debug('RECV ' + domain + '>' + line);
 
-        this.message += line + CRLF;
+        const message = line + CRLF;
 
         if (line[3] === ' ') {
             // 250 - Requested mail action okay, completed.
             const lineNumber = parseInt(line.substring(0, 4));
-            this.response(lineNumber, this.message, domain, srcHost, body, connectedExchange, resolve);
-            // this.message = '';
+            this.response(lineNumber, message, domain, srcHost, body, connectedExchange, resolve);
         }
     }
 
@@ -223,15 +219,17 @@ class MailDove {
                     this.writeToSocket('EHLO ' + srcHost, domain);
                     break;
                 } else {
+                    let helloCommand: string;
                     // check for ESMTP/ignore-case
                     if (/\besmtp\b/i.test(msg)) {
                         // TODO: determine AUTH type for relay; auth consolein, auth crm-md5, auth plain
-                        this.cmd = 'EHLO';
+                        helloCommand = 'EHLO';
                     } else {
+                        // SMTP Only, hence don't check for STARTTLS
                         this.upgraded = true;
-                        this.cmd = 'HELO';
+                        helloCommand = 'HELO';
                     }
-                    this.writeToSocket(`${this.cmd} ${srcHost}`, domain);
+                    this.writeToSocket(`${helloCommand} ${srcHost}`, domain);
                     break;
                 }
             case smtpCodes.Bye:
@@ -248,7 +246,7 @@ class MailDove {
 
                 resolve(domain);
                 return;
-            
+
             case smtpCodes.AuthSuccess: // AUTH-Verify OK
             case smtpCodes.OperationOK: // Operation OK
                 if (this.upgraded !== true) {
@@ -345,14 +343,14 @@ class MailDove {
                 try {
                     logger.info(`DOMN: Group: ${groups[domain]}`)
                     successOutboundRecipients.push(
-                    await this.sendToSMTP(domain, parsedEmail.domain, 
-                        parsedEmail.address, groups[domain], message.toString()));
+                        await this.sendToSMTP(domain, parsedEmail.domain,
+                            parsedEmail.address, groups[domain], message.toString()));
                 } catch (ex) {
                     logger.error(`Could not send email to ${domain}: ${ex}`);
                 }
             }
         }
-        if (!successOutboundRecipients.length){
+        if (!successOutboundRecipients.length) {
             throw "Could not send mails to any of the recipients"
         }
         return successOutboundRecipients;
