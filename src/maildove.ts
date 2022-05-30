@@ -57,6 +57,7 @@ class MailDove {
     step = 0;
     queue: string[] = [];
     // TODO: May crash in multi domain scenario
+    // Where one of the domains is not TLS capable.
     upgraded = false;
     isUpgradeInProgress = false;
     sock: Socket;
@@ -132,7 +133,7 @@ class MailDove {
                 // Convert RCVD to an array 
                 const received = chunk.toString().split(CRLF);
                 for (const line of received) {
-                    this.onLine(line, domain, srcHost, body, connectedExchange, resolve);
+                    this.parseInputAndRespond(line, domain, srcHost, body, connectedExchange, resolve);
                 }
             });
 
@@ -163,7 +164,7 @@ class MailDove {
         this.sock.write(s + CRLF);
     }
 
-    onLine(line: string, domain: string, srcHost: string, body: string, connectedExchange: string, resolve) {
+    parseInputAndRespond(line: string, domain: string, srcHost: string, body: string, connectedExchange: string, resolve) {
         logger.debug('RECV ' + domain + '>' + line);
 
         const message = line + CRLF;
@@ -171,11 +172,11 @@ class MailDove {
         if (line[3] === ' ') {
             // 250 - Requested mail action okay, completed.
             const lineNumber = parseInt(line.substring(0, 4));
-            this.response(lineNumber, message, domain, srcHost, body, connectedExchange, resolve);
+            this.handleResponse(lineNumber, message, domain, srcHost, body, connectedExchange, resolve);
         }
     }
 
-    response(code: number, msg: string, domain: string, srcHost: string, body: string, connectedExchange: string, resolve) {
+    handleResponse(code: number, msg: string, domain: string, srcHost: string, body: string, connectedExchange: string, resolve) {
         switch (code) {
             case smtpCodes.ServiceReady:
                 //220 - On <domain> Service ready
@@ -203,7 +204,7 @@ class MailDove {
                             // Convert RCVD to an array 
                             const received = chunk.toString().split(CRLF);
                             for (const line of received) {
-                                this.onLine(line, domain, srcHost, body, connectedExchange, resolve);
+                                this.parseInputAndRespond(line, domain, srcHost, body, connectedExchange, resolve);
                             }
                         });
                         this.sock.removeAllListeners('close');
