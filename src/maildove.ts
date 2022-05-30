@@ -132,6 +132,8 @@ class MailDove {
             this.sock.on('data', (chunk) => {
                 // Convert RCVD to an array 
                 const received = chunk.toString().split(CRLF);
+                // Remove last element(whitespace) from received
+                received.pop()
                 for (const line of received) {
                     this.parseInputAndRespond(line, domain, srcHost, body, connectedExchange, resolve);
                 }
@@ -156,7 +158,7 @@ class MailDove {
             this.queue.push('');
         })
 
-        return domain
+        // return domain
     }
 
     writeToSocket = (s: string, domain: string) => {
@@ -244,6 +246,9 @@ class MailDove {
                 // whose name is an array index whose value is not smaller 
                 // than the new length is automatically deleted
                 this.queue.length = 0;
+
+                this.sock.removeAllListeners('close');
+                this.sock.removeAllListeners('end');
 
                 resolve(domain);
                 return;
