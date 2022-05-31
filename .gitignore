@@ -105,3 +105,6 @@ dist
 
 #build output
 lib/
+
+#vscode
+.vscode
