@@ -54,13 +54,13 @@ class MailDove {
     startTLS: boolean;
     rejectUnauthorized: boolean;
     tls: tlsInterface;
-    step = 0;
-    queue: string[] = [];
+    private step = 0;
+    private queue: string[] = [];
     // TODO: May crash in multi domain scenario
     // Where one of the domains is not TLS capable.
-    upgraded = false;
-    isUpgradeInProgress = false;
-    sock: Socket;
+    private upgraded = false;
+    private isUpgradeInProgress = false;
+    private sock: Socket;
 
 
     constructor(options: MailDoveOptions) {
@@ -103,16 +103,20 @@ class MailDove {
     //  * @param {string}  from      Source from address.
     //  * @param {string[]}recipients    Recipients list.
     //  * @param {string}  body      Email body
-    //  * @returns {Promise<void>}
+    //  * @returns {Promise<string>}
     //  */
-    async sendToSMTP(domain: string, srcHost: string, from: string, recipients: string[], body: string): Promise<any> {
+    async sendToSMTP(domain: string, srcHost: string, from: string, recipients: string[], body: string): Promise<string> {
         const resolvedMX = await this.resolveMX(domain)
         logger.log("debug", "Resolved MX %O", resolvedMX);
 
         await new Promise((resolve, reject) => {
+            let isConnected = false;
             let connectedExchange: string;
 
             for (const mx of resolvedMX) {
+                if (isConnected) {
+                    break;
+                }
                 this.sock = createConnection(this.smtpPort, mx.exchange);
 
                 // eslint-disable-next-line no-loop-func
@@ -158,7 +162,7 @@ class MailDove {
             this.queue.push('');
         })
 
-        // return domain
+        return domain
     }
 
     writeToSocket = (s: string, domain: string) => {
